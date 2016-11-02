@@ -145,6 +145,7 @@ class SaleOrderLine(models.Model):
 
 class AccountInvoiceLine(models.Model):
     _inherit = 'account.invoice.line'
+    _order = "booking_start,invoice_id,sequence,id"
 
     venue_id = fields.Many2one('pitch_booking.venue', string='Venue')
     pitch_id = fields.Many2one('pitch_booking.pitch', string='Pitch')
@@ -166,7 +167,6 @@ class SaleOrder(models.Model):
         if resource:
             for rec in self:
                 line = super(SaleOrder, rec)._add_booking_line(product_id, resource, start, end, tz_offset)
-                sol = rec.env['sale.order.line'].sudo()
                 pitch_obj = rec.env['pitch_booking.pitch'].sudo()
                 pitchs = pitch_obj.search([('resource_id', '=', resource)], limit=1)
                 if pitchs:
