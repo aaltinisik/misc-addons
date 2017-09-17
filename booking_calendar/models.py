@@ -2,7 +2,6 @@
 import copy
 from datetime import datetime, timedelta, time
 import pytz
-from dateutil import rrule
 import logging
 
 from openerp import api, models, fields
@@ -74,6 +73,25 @@ class ResourceResource(models.Model):
 
         return bookings
 
+    @api.multi
+    def interval_available_slots(self, start, end, offset, online=False):
+        # redefine in child
+        self.ensure_one()
+        return {}
+
+    @api.model
+    def generate_slot(self, start_dt, end_dt, online=False):
+        self.ensure_one()
+        return {
+            'start': start_dt.strftime(DTF),
+            'end': end_dt.strftime(DTF),
+            'title': self.name,
+            'color': self.color,
+            'className': 'free_slot resource_%s' % self.id,
+            'editable': False,
+            'resource_id': self.id
+        }
+
 
 class ResourceCalendar(models.Model):
     _inherit = 'resource.calendar'
@@ -90,56 +108,58 @@ class ResourceCalendar(models.Model):
         for calendar in self:
             product = self.env['product.template'].search([('calendar_id', '=', calendar.id)])
             hours = timedelta()
-            for day in rrule.rrule(rrule.DAILY, dtstart=start_dt,
-                                   until=end_dt.replace(hour=23, minute=59, second=59),
-                                   byweekday=calendar.get_weekdays()[0]):
-                day_start_dt = day.replace(hour=0, minute=0, second=0)
-                if start_dt and day.date() == start_dt.date():
-                    day_start_dt = start_dt
-                day_end_dt = day.replace(hour=23, minute=59, second=59)
-                if end_dt and day.date() == end_dt.date():
-                    day_end_dt = end_dt
-                work_limits = []
-                work_limits.append((day_start_dt.replace(hour=0, minute=0, second=0), day_start_dt))
-                work_limits.append((day_end_dt, day_end_dt.replace(hour=23, minute=59, second=59)))
 
-                work_dt = day_start_dt.replace(hour=0, minute=0, second=0)
-                working_intervals = []
-                for calendar_working_day in calendar.get_attendances_for_weekdays([day_start_dt.weekday()])[0]:
-                    if product and product[0].work_on_holidays and product[0].holidays_country_id and product[0].holidays_schedule == 'premium':
-                        if calendar.get_attendances_for_weekdays([5]):
-                            holidays = self.env['hr.holidays.public'].search([
-                                ('country_id', '=', product[0].holidays_country_id.id),
-                                ('year', '=', start_dt.year),
-                            ], limit=1)
-                            for h in holidays[0].line_ids.filtered(lambda r: r.date == day_start_dt.strftime(DF)):
-                                calendar_working_day = calendar.get_attendances_for_weekdays([5])[0][0]
-                    min_from = int((calendar_working_day.hour_from - int(calendar_working_day.hour_from)) * 60)
-                    min_to = int((calendar_working_day.hour_to - int(calendar_working_day.hour_to)) * 60)
-                    x = work_dt.replace(hour=int(calendar_working_day.hour_from), minute=min_from)
-                    if calendar_working_day.hour_to == 0:
-                        y = work_dt.replace(hour=0, minute=0) + timedelta(days=1)
-                    else:
-                        y = work_dt.replace(hour=int(calendar_working_day.hour_to), minute=min_to)
-                    working_interval = (x, y)
-                    leaves = self.get_leave_intervals()
-                    leaves = leaves and self.localize_time_intervals(leaves[0])
-                    work_limits += leaves
-                    if product and not product[0].work_on_holidays and product[0].holidays_country_id:
-                        holidays = self.env['hr.holidays.public'].search([
-                            ('country_id', '=', product[0].holidays_country_id.id),
-                            ('year', '=', start_dt.year),
-                        ], limit=1)
-                        for h in holidays[0].line_ids.filtered(lambda r: r.date == start_dt.strftime(DF)):
-                            holiday_interval = [(datetime.combine(datetime.strptime(h.date, DF), time(0, 0)),
-                                                 datetime.combine(datetime.strptime(h.date, DF) + timedelta(1), time(0, 0)))]
-                            holiday_interval = self.make_offset_aware(holiday_interval)
-                            work_limits += holiday_interval
-                    work_limits = self.make_offset_aware(work_limits)
-                    working_interval = self.make_offset_aware([working_interval])[0]
-                    working_intervals += calendar.interval_remove_leaves(working_interval, work_limits)
-                for interval in working_intervals:
-                    hours += interval[1] - interval[0]
+            day_start_dt = start_dt
+            day_end_dt = end_dt
+            # sometimes one booking may be on two different weekdays
+            # call get_working_accurate_hours recursively for that cases
+            if day_end_dt.date() == day_start_dt.date() + timedelta(1) and \
+                    day_end_dt != day_end_dt.replace(hour=0, minute=0, second=0):
+                    hours += timedelta(hours=self.get_working_accurate_hours(start_dt=day_end_dt.replace(hour=0, minute=0, second=0), end_dt=day_end_dt))
+
+            weekday = [day_start_dt.weekday()]
+            if product and product[0].work_on_holidays and product[0].holidays_country_id and product[0].holidays_schedule == 'premium':
+                if calendar.get_attendances_for_weekdays([5]):
+                    holidays = self.env['hr.holidays.public'].search([
+                        ('country_id', '=', product[0].holidays_country_id.id),
+                        ('year', '=', start_dt.year),
+                    ], limit=1)
+                    for h in holidays[0].line_ids.filtered(lambda r: r.date == start_dt.strftime(DF)):
+                        weekday = [5]
+
+            work_limits = []
+            work_limits.append((day_start_dt.replace(hour=0, minute=0, second=0), day_start_dt))
+            work_limits.append((day_end_dt, day_end_dt.replace(hour=23, minute=59, second=59)))
+
+            work_dt = day_start_dt.replace(hour=0, minute=0, second=0)
+            working_intervals = []
+            for calendar_working_day in calendar.get_attendances_for_weekdays(weekday)[0]:
+                min_from = int((calendar_working_day.hour_from - int(calendar_working_day.hour_from)) * 60)
+                min_to = int((calendar_working_day.hour_to - int(calendar_working_day.hour_to)) * 60)
+                x = work_dt.replace(hour=int(calendar_working_day.hour_from), minute=min_from)
+                if calendar_working_day.hour_to == 0:
+                    y = work_dt.replace(hour=0, minute=0) + timedelta(days=1)
+                else:
+                    y = work_dt.replace(hour=int(calendar_working_day.hour_to), minute=min_to)
+                working_interval = (x, y)
+                leaves = self.get_leave_intervals()
+                leaves = leaves and self.localize_time_intervals(leaves[0])
+                work_limits += leaves
+                if product and not product[0].work_on_holidays and product[0].holidays_country_id:
+                    holidays = self.env['hr.holidays.public'].search([
+                        ('country_id', '=', product[0].holidays_country_id.id),
+                        ('year', '=', start_dt.year),
+                    ], limit=1)
+                    for h in holidays[0].line_ids.filtered(lambda r: r.date == start_dt.strftime(DF)):
+                        holiday_interval = [(datetime.combine(datetime.strptime(h.date, DF), time(0, 0)),
+                                             datetime.combine(datetime.strptime(h.date, DF) + timedelta(1), time(0, 0)))]
+                        holiday_interval = self.make_offset_aware(holiday_interval)
+                        work_limits += holiday_interval
+                work_limits = self.make_offset_aware(work_limits)
+                working_interval = self.make_offset_aware([working_interval])[0]
+                working_intervals += calendar.interval_remove_leaves(working_interval, work_limits)
+            for interval in working_intervals:
+                hours += interval[1] - interval[0]
 
             # Add public holidays
             leaves = leave_obj.search([('name', '=', 'PH'), ('calendar_id', '=', calendar.id)])
@@ -209,7 +229,7 @@ class SaleOrderLine(models.Model):
     resource_id = fields.Many2one('resource.resource', 'Resource')
     booking_start = fields.Datetime(string="Date start")
     booking_end = fields.Datetime(string="Date end")
-    calendar_id = fields.Many2one('resource.calendar', related='product_id.calendar_id')
+    calendar_id = fields.Many2one('resource.calendar', related='product_id.calendar_id', store=True)
     project_id = fields.Many2one('account.analytic.account', compute='_compute_dependent_fields', store=False, string='Contract')
     partner_id = fields.Many2one('res.partner', compute='_compute_dependent_fields', store=False, string='Customer')
     overlap = fields.Boolean(compute='_compute_date_overlap', default=False, store=True)
@@ -219,11 +239,11 @@ class SaleOrderLine(models.Model):
     because resource_id is related to pitch in pitch_booking module. If we hadn't done it then _compute_date_overlap would be called
     for each line with the same resource instead of only only for current new line''')
 
-    @api.one
+    @api.multi
     def write(self, vals):
-        result = super(SaleOrderLine, self).write(vals)
         if vals.get('resource_id'):
             vals['resource_trigger'] = vals.get('resource_id')
+        result = super(SaleOrderLine, self).write(vals)
         return result
 
     @api.multi
@@ -231,6 +251,27 @@ class SaleOrderLine(models.Model):
         for line in self:
             line.partner_id = line.order_id.partner_id
             line.project_id = line.order_id.project_id
+
+    @api.model
+    def is_overlaps(self, resource_id, booking_start, booking_end, self_ids=None):
+        if not self_ids:
+            self_ids = []
+        overlaps = 0
+        if resource_id and booking_start and booking_end:
+            overlaps = self.search_count([('active', '=', True),
+                                          '&', '|', '&', ('booking_start', '>=', booking_start), ('booking_start', '<', booking_end),
+                                          '&', ('booking_end', '>', booking_start), ('booking_end', '<=', booking_end),
+                                          ('resource_id', '!=', False),
+                                          ('id', 'not in', self_ids),
+                                          ('resource_id', '=', resource_id),
+                                          ('state', '!=', 'cancel')])
+            overlaps += self.search_count([('active', '=', True),
+                                           ('id', 'not in', self_ids),
+                                           ('booking_start', '=', booking_start),
+                                           ('booking_end', '=', booking_end),
+                                           ('resource_id', '=', resource_id),
+                                           ('state', '!=', 'cancel')])
+        return overlaps
 
     @api.multi
     @api.depends('resource_trigger', 'booking_start', 'booking_end', 'active')
@@ -242,19 +283,7 @@ class SaleOrderLine(models.Model):
             overlaps = 0
             if line.resource_id and line.booking_start and line.booking_end:
                 ids = getattr(self, '_origin', False) and self._origin.ids or bool(line.id) and [line.id] or []
-                overlaps = line.search_count([('active', '=', True),
-                                              '&', '|', '&', ('booking_start', '>=', line.booking_start), ('booking_start', '<', line.booking_end),
-                                              '&', ('booking_end', '>', line.booking_start), ('booking_end', '<=', line.booking_end),
-                                              ('resource_id', '!=', False),
-                                              ('id', 'not in', ids),
-                                              ('resource_id', '=', line.resource_id.id),
-                                              ('state', '!=', 'cancel')])
-                overlaps += line.search_count([('active', '=', True),
-                                               ('id', 'not in', ids),
-                                               ('booking_start', '=', line.booking_start),
-                                               ('booking_end', '=', line.booking_end),
-                                               ('resource_id', '=', line.resource_id.id),
-                                               ('state', '!=', 'cancel')])
+                overlaps = self.is_overlaps(line.resource_id.id, line.booking_start, line.booking_end, self_ids=ids)
             line.overlap = bool(overlaps)
 
     @api.multi
@@ -308,6 +337,36 @@ class SaleOrderLine(models.Model):
             if datetime.strptime(line.booking_start, DTF) + timedelta(minutes=SLOT_START_DELAY_MINS) < datetime.now():
                 raise ValidationError(_('Please book on time in %s minutes from now.') % SLOT_START_DELAY_MINS)
 
+    @api.multi
+    @api.constrains('resource_trigger', 'booking_start', 'booking_end')
+    def _check_working_time_slots(self):
+        for line in self:
+            user_tz = pytz.timezone(self.env.context.get('tz') or 'UTC')
+            if line.resource_id and line.resource_id.has_slot_calendar:
+                resource = line.resource_id
+                start_dt = datetime.strptime(line.booking_start, DTF).replace(second=0, microsecond=0)
+                end_dt = datetime.strptime(line.booking_end, DTF).replace(second=0, microsecond=0)
+                # localize times from db (UTC times) in user tz first
+                start_dt = pytz.utc.localize(start_dt).astimezone(user_tz)
+                end_dt = pytz.utc.localize(end_dt).astimezone(user_tz)
+
+                allowed_start = []
+                allowed_end = []
+                if resource.calendar_id:
+                    for calendar_working_day in resource.calendar_id.get_attendances_for_weekdays([start_dt.weekday()])[0]:
+                        min_from = int((calendar_working_day.hour_from - int(calendar_working_day.hour_from)) * 60)
+                        min_to = int((calendar_working_day.hour_to - int(calendar_working_day.hour_to)) * 60)
+                        x = start_dt.replace(hour=int(calendar_working_day.hour_from), minute=min_from)
+                        allowed_start.append(x)
+                        if calendar_working_day.hour_to == 0:
+                            y = start_dt.replace(hour=0, minute=0) + timedelta(days=1)
+                        else:
+                            y = start_dt.replace(hour=int(calendar_working_day.hour_to), minute=min_to)
+                        allowed_end.append(y)
+                if (start_dt not in allowed_start) or (end_dt not in allowed_end):
+                    msg = "There are bookings with times outside the allowed boundary"
+                    raise ValidationError(msg)
+
     @api.model
     def search_booking_lines(self, start, end, domain):
         domain.append(('state', '!=', 'cancel'))
@@ -325,17 +384,29 @@ class SaleOrderLine(models.Model):
         domain.append(('booking_end', '>=', end))
         return self.search(domain)
 
+    @api.multi
+    def localize_to_online(self, time_string_in_utc):
+        self.ensure_one()
+        # to be redefined in child.
+        # online calendar should have the setting as follows
+        # timezone: false
+        # you don't store timezone information for your events and you want all events to render consistently across all client computers, regardless of timezone
+        # online customers may book from everywhere but resources may be in certain timezone always
+        return time_string_in_utc
+
     @api.model
     def get_bookings(self, start, end, offset, domain, online=False):
         bookings = self.env['resource.resource'].sudo().search([]).search_booking_lines(start, end, domain, online=online)
-        one_hour_bookings = bookings.filtered(lambda r: r.product_uom_qty == 1)
-        many_hour_bookings = bookings - one_hour_bookings
+        slot_calendar_bookings = bookings.filtered(lambda r: r.resource_id.has_slot_calendar)
+        ordinary_bookings = bookings - slot_calendar_bookings
+        one_hour_bookings = ordinary_bookings.filtered(lambda r: r.product_uom_qty == 1)
+        many_hour_bookings = ordinary_bookings - one_hour_bookings
         res = [{
             'className': 'booked_slot resource_%s' % b.resource_id.id,
             'id': b.id,
             'title': b.resource_id.name,
-            'start': '%s+00:00' % b.booking_start,
-            'end': '%s+00:00' % b.booking_end,
+            'start': online and b.localize_to_online(b.booking_start) or b.booking_start,
+            'end': online and b.localize_to_online(b.booking_end) or b.booking_end,
             'resource_id': b.resource_id.id,
             'editable': False,
             'color': b.resource_id.color
@@ -344,17 +415,53 @@ class SaleOrderLine(models.Model):
             start_dt = datetime.strptime(b.booking_start, DTF)
             end_dt = datetime.strptime(b.booking_end, DTF)
             while start_dt < end_dt:
+                start_str = start_dt.strftime(DTF)
+                end_str = (start_dt + timedelta(hours=1)).strftime(DTF)
                 res.append({
                     'className': 'booked_slot resource_%s' % b.resource_id.id,
                     'id': b.id,
                     'title': b.resource_id.name,
-                    'start': '%s+00:00' % start_dt.strftime(DTF),
-                    'end': '%s+00:00' % (start_dt + timedelta(hours=1)).strftime(DTF),
+                    'start': online and b.localize_to_online(start_str) or start_str,
+                    'end': online and b.localize_to_online(end_str) or end_str,
                     'resource_id': b.resource_id.id,
                     'editable': False,
                     'color': b.resource_id.color
                 })
                 start_dt += timedelta(hours=1)
+        for b in slot_calendar_bookings:
+            start_dt = datetime.strptime(b.booking_start, DTF).replace(second=0, microsecond=0)
+            start_dt_utc = pytz.utc.localize(start_dt)
+            end_dt = datetime.strptime(b.booking_end, DTF).replace(second=0, microsecond=0)
+            end_dt_utc = pytz.utc.localize(end_dt)
+            resource = b.resource_id
+            user_tz = pytz.timezone(self.env.context.get('tz') or 'UTC')
+            if resource.calendar_id:
+                for calendar_working_day in resource.calendar_id.get_attendances_for_weekdays([start_dt.weekday()])[0]:
+                    min_from = int((calendar_working_day.hour_from - int(calendar_working_day.hour_from)) * 60)
+                    min_to = int((calendar_working_day.hour_to - int(calendar_working_day.hour_to)) * 60)
+                    x = start_dt.replace(hour=int(calendar_working_day.hour_from), minute=min_from)
+                    slot_start_utc = user_tz.localize(x).astimezone(pytz.utc)
+
+                    if calendar_working_day.hour_to == 0:
+                        y = start_dt.replace(hour=0, minute=0) + timedelta(days=1)
+                    else:
+                        y = start_dt.replace(hour=int(calendar_working_day.hour_to), minute=min_to)
+                    slot_end_utc = user_tz.localize(y).astimezone(pytz.utc)
+
+                    if slot_start_utc >= start_dt_utc and slot_end_utc <= end_dt_utc:
+                        start_str = slot_start_utc.strftime(DTF)
+                        end_str = slot_end_utc.strftime(DTF)
+                        res.append({
+                            'className': 'booked_slot resource_%s' % b.resource_id.id,
+                            'id': b.id,
+                            'title': b.resource_id.name,
+                            'start': online and b.localize_to_online(start_str) or start_str,
+                            'end': online and b.localize_to_online(end_str) or end_str,
+                            'resource_id': b.resource_id.id,
+                            'editable': False,
+                            'color': b.resource_id.color
+                        })
+
         return res
 
     @api.onchange('booking_start', 'booking_end')
@@ -453,18 +560,6 @@ class SaleOrderLine(models.Model):
         } for r in resources]
 
     @api.model
-    def generate_slot(self, r, start_dt, end_dt):
-        return {
-            'start': start_dt.strftime(DTF),
-            'end': end_dt.strftime(DTF),
-            'title': r.name,
-            'color': r.color,
-            'className': 'free_slot resource_%s' % r.id,
-            'editable': False,
-            'resource_id': r.id
-        }
-
-    @api.model
     def del_booked_slots(self, slots, start, end, resources, offset, fixed_start_dt, end_dt):
         now = datetime.now() - timedelta(minutes=SLOT_START_DELAY_MINS) - timedelta(minutes=offset)
         lines = self.search_booking_lines(start, end, [('resource_id', 'in', [r['id'] for r in resources])])
@@ -495,79 +590,20 @@ class SaleOrderLine(models.Model):
 
     @api.model
     def get_free_slots(self, start, end, offset, domain, online=False):
-        leave_obj = self.env['resource.calendar.leaves']
-        start_dt = datetime.strptime(start, DTF) - timedelta(minutes=offset)
-        fixed_start_dt = start_dt
         resources = self.get_free_slots_resources(domain)
         slots = {}
-        now = datetime.now() - timedelta(minutes=SLOT_START_DELAY_MINS) - timedelta(minutes=offset)
+        now = datetime.now() \
+            - timedelta(minutes=SLOT_START_DELAY_MINS) \
+            - timedelta(minutes=offset)
+        now = now.replace(hour=0, minute=0, second=0)
+        start_dt = datetime.strptime(start, DTF) - timedelta(minutes=offset)
+        start_dt = start_dt < now and now or start_dt
+        end_dt = datetime.strptime(end, DTF) - timedelta(minutes=offset)
         for r in resources:
-            if r.id not in slots:
-                slots[r.id] = {}
-
-            start_dt = fixed_start_dt
-            if online and r.hours_to_prepare:
-                days = r.hours_to_prepare / 24
-                hours = r.hours_to_prepare % 24
-                online_min_dt = now + timedelta(days=days, hours=hours) - timedelta(minutes=now.minute, seconds=now.second)
-                start_dt = start_dt if start_dt > online_min_dt else online_min_dt
-
-            end_dt = datetime.strptime(end, DTF) - timedelta(minutes=offset)
-            if online and r.allowed_days_interval:
-                online_max_dt = now + timedelta(days=r.allowed_days_interval) - timedelta(minutes=now.minute, seconds=now.second)
-                end_dt = end_dt if end_dt < online_max_dt else online_max_dt
-
-            while start_dt < end_dt:
-                if start_dt < now:
-                    start_dt += timedelta(minutes=SLOT_DURATION_MINS)
-                    continue
-                if not r.work_on_holidays and r.holidays_country_id:
-                    holidays = self.env['hr.holidays.public'].search([
-                        ('country_id', '=', r.holidays_country_id.id),
-                        ('year', '=', start_dt.year),
-                    ], limit=1)
-                    if holidays[0].line_ids.filtered(lambda r: r.date == start_dt.strftime(DF)):
-                        start_dt += timedelta(1)
-
-                if r.calendar_id:
-                    for calendar_working_day in r.calendar_id.get_attendances_for_weekdays([start_dt.weekday()])[0]:
-                        min_from = int((calendar_working_day.hour_from - int(calendar_working_day.hour_from)) * 60)
-                        min_to = int((calendar_working_day.hour_to - int(calendar_working_day.hour_to)) * 60)
-                        x = start_dt.replace(hour=int(calendar_working_day.hour_from), minute=min_from)
-                        if calendar_working_day.hour_to == 0:
-                            y = start_dt.replace(hour=0, minute=0) + timedelta(days=1)
-                        else:
-                            y = start_dt.replace(hour=int(calendar_working_day.hour_to), minute=min_to)
-                        if r.has_slot_calendar and x >= now and x >= start_dt and y <= end_dt:
-                            slots[r.id][x.strftime(DTF)] = self.generate_slot(r, x, y)
-                        elif not r.has_slot_calendar:
-                            while x < y:
-                                if x >= now:
-                                    slots[r.id][x.strftime(DTF)] = self.generate_slot(r, x, x + timedelta(minutes=SLOT_DURATION_MINS))
-                                x += timedelta(minutes=SLOT_DURATION_MINS)
-                    start_dt += timedelta(days=1)
-                    start_dt = start_dt.replace(hour=0, minute=0, second=0)
-                else:
-                    slots[r.id][start_dt.strftime(DTF)] = self.generate_slot(r, start_dt, start_dt + timedelta(minutes=SLOT_DURATION_MINS))
-                    start_dt += timedelta(minutes=SLOT_DURATION_MINS)
-                    continue
-            leaves = leave_obj.search([('name', '=', 'PH'), ('calendar_id', '=', r.calendar_id.id)])
-            for leave in leaves:
-                from_dt = datetime.strptime(leave.date_from, '%Y-%m-%d %H:%M:00') - timedelta(minutes=offset)
-                to_dt = datetime.strptime(leave.date_to, '%Y-%m-%d %H:%M:00') - timedelta(minutes=offset)
-                if r.has_slot_calendar:
-                    if from_dt >= now and from_dt >= start_dt and to_dt <= end_dt:
-                        slots[r.id][from_dt.strftime(DTF)] = self.generate_slot(r, from_dt, end_dt)
-                    else:
-                        continue
-                else:
-                    from_dt = max(now, from_dt)
-                    while from_dt < to_dt:
-                        slots[r.id][from_dt.strftime(DTF)] = self.generate_slot(r, from_dt, from_dt + timedelta(minutes=SLOT_DURATION_MINS))
-                        from_dt += timedelta(minutes=SLOT_DURATION_MINS)
+            slots.update({r.id: r.interval_available_slots(start, end, offset, online=online)})
 
         res = []
-        for slot in self.del_booked_slots(slots, start, end, resources, offset, fixed_start_dt, end_dt).values():
+        for slot in self.del_booked_slots(slots, start, end, resources, offset, start_dt, end_dt).values():
             for pitch in slot.values():
                 res.append(pitch)
         return res

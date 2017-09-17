@@ -1,7 +1,7 @@
-.. _changelog:
+`1.0.5`
+-------
 
-Updates
-=======
+- Fix: compatibility with the "Mass Editing" module
 
 `1.0.4`
 -------
