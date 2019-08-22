@@ -8,6 +8,6 @@
     'website': 'https://yelizariev.github.io',
     'summary': 'Check WARNING before installing / uninstalling!',
     'depends': ['product'],
-    'data': [],
+    'data': ['wizard/wizard_migrate_images.xml'],
     'installable': True
 }

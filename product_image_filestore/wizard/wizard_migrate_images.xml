@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<openerp>
+    <data>
+        <record model="ir.ui.view" id="migrate_images">
+            <field name="name">product_image_filestore.wizard_migrate.form</field>
+            <field name="model">product_image_filestore.wizard_migrate</field>
+            <field name="arch" type="xml">
+                <form string="Migrate Product Images">
+                    
+                    <footer>
+                        <button name="action_confirm" type="object"
+                                string="Start Migration" class="oe_highlight"/>
+                        or
+                        <button string="Cancel" class="oe_link"
+                                special="cancel"/>
+                    </footer>
+                </form>
+            </field>
+        </record>
+        
+        <record id="action_migrate_images" model="ir.actions.act_window">
+            <field name="name">Migrate Product Images</field>
+            <field name="res_model">product_image_filestore.wizard_migrate</field>
+            <field name="view_type">form</field>
+            <field name="view_mode">form</field>
+            <field name="target">new</field>
+        </record>
+        
+        
+        <menuitem id="menu_migrate_images"
+            parent="base.menu_management"
+            name="Migrate Images"
+            action="action_migrate_images"
+            sequence="1"/>
+
+        
+
+    </data>
+</openerp>
