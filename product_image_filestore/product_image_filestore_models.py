@@ -98,24 +98,24 @@ class ProductTemplate(osv.Model):
 
         return True
 
-    _columns = {
-        'image_attachment_id': fields.many2one('ir.attachment', 'Image attachment', help='Technical field to store image in filestore'),
-        'image_small_attachment_id': fields.many2one('ir.attachment', 'Small-sized Image  attachment', help='Technical field to store image in filestore'),
-        'image_medium_attachment_id': fields.many2one('ir.attachment', 'Medium-sized Image  attachment', help='Technical field to store image in filestore'),
-
-        'image': fields.function(_get_image, fnct_inv=_set_image, string="Image", multi='_get_image', type='binary',
-                                 help="This field holds the image used as image for the product, limited to 1024x1024px."),
-        'image_medium': fields.function(_get_image, fnct_inv=_set_image,
-                                        string="Medium-sized image", type="binary", multi="_get_image",
-                                        help="Medium-sized image of the product. It is automatically "
-                                        "resized as a 128x128px image, with aspect ratio preserved, "
-                                        "only when the image exceeds one of those sizes. Use this field in form views or some kanban views."),
-        'image_small': fields.function(_get_image, fnct_inv=_set_image,
-                                       string="Small-sized image", type="binary", multi="_get_image",
-                                       help="Small-sized image of the product. It is automatically "
-                                       "resized as a 64x64px image, with aspect ratio preserved. "
-                                       "Use this field anywhere a small image is required."),
-    }
+#    _columns = {
+#        'image_attachment_id': fields.many2one('ir.attachment', 'Image attachment', help='Technical field to store image in filestore'),
+#        'image_small_attachment_id': fields.many2one('ir.attachment', 'Small-sized Image  attachment', help='Technical field to store image in filestore'),
+#        'image_medium_attachment_id': fields.many2one('ir.attachment', 'Medium-sized Image  attachment', help='Technical field to store image in filestore'),
+#
+#        'image': fields.function(_get_image, fnct_inv=_set_image, string="Image", multi='_get_image', type='binary',
+#                                 help="This field holds the image used as image for the product, limited to 1024x1024px."),
+#        'image_medium': fields.function(_get_image, fnct_inv=_set_image,
+#                                        string="Medium-sized image", type="binary", multi="_get_image",
+#                                        help="Medium-sized image of the product. It is automatically "
+#                                        "resized as a 128x128px image, with aspect ratio preserved, "
+#                                        "only when the image exceeds one of those sizes. Use this field in form views or some kanban views."),
+#        'image_small': fields.function(_get_image, fnct_inv=_set_image,
+#                                       string="Small-sized image", type="binary", multi="_get_image",
+#                                       help="Small-sized image of the product. It is automatically "
+#                                       "resized as a 64x64px image, with aspect ratio preserved. "
+#                                       "Use this field anywhere a small image is required."),
+#    }
 
 
 class ProductProduct(osv.Model):

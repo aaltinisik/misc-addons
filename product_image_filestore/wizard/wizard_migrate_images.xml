@@ -27,13 +27,13 @@
         </record>
         
         
-        <menuitem id="menu_migrate_images"
+<!--        <menuitem id="menu_migrate_images"
             parent="base.menu_management"
             name="Migrate Images"
             action="action_migrate_images"
             sequence="1"/>
 
-        
+    -->    
 
     </data>
 </openerp>
